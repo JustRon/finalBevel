@@ -43,21 +43,21 @@ class FinalBevel(bpy.types.Operator):
         max = 100
     )
 
-    secondaryBevelSegments: IntProperty(
-        name = "Secondary Bevel Segments",
-        description = "How many segments to use for the edges with the second highest bevel weight",
-        default = 3,
-        min = 2,
-        max = 100
-    )
+    # secondaryBevelSegments: IntProperty(
+    #     name = "Secondary Bevel Segments",
+    #     description = "How many segments to use for the edges with the second highest bevel weight",
+    #     default = 3,
+    #     min = 2,
+    #     max = 100
+    # )
 
-    tertiaryBevelSegments: IntProperty(
-        name = "Tertiary Bevel Segments",
-        description = "How many segments to use for the remaining edges",
-        default = 2,
-        min = 2,
-        max = 100
-    )
+    # tertiaryBevelSegments: IntProperty(
+    #     name = "Tertiary Bevel Segments",
+    #     description = "How many segments to use for the remaining edges",
+    #     default = 2,
+    #     min = 2,
+    #     max = 100
+    # )
 
     clampOverlap: BoolProperty(
         name = "Clamp Overlap",
@@ -83,7 +83,7 @@ class FinalBevel(bpy.types.Operator):
         so.data.use_customdata_vertex_bevel = True
 
         currentBevelSegments = self.primaryBevelSegments
-        bevelSegmentsList = [self.primaryBevelSegments, self.secondaryBevelSegments, self.tertiaryBevelSegments]
+        # bevelSegmentsList = [self.primaryBevelSegments, self.secondaryBevelSegments, self.tertiaryBevelSegments]
         
         #Saving all our different bevel weights into a list
         bevelWeights = []
@@ -170,25 +170,31 @@ class FinalBevel(bpy.types.Operator):
                     else: 
                         verts[vI].select = False
 
-                # if i == 1:
-                #     raise RuntimeError("Stopping the script here")
-
                 possibleExtendBevelWeightEdges = [e for e in edges if verts[e.vertices[0]].select == True and verts[e.vertices[1]].select == True and e.bevel_weight == 0.0]
 
 
                 # #Deselect everything again
                 faces.foreach_set("select", (False,) * len(faces))
                 edges.foreach_set("select", (False,) * len(edges))
-                verts.foreach_set("select", (False,) * len(verts)) 
+                verts.foreach_set("select", (False,) * len(verts))
 
                 if len(possibleExtendBevelWeightEdges) == 0:
                     continue
 
+                for e in possibleExtendBevelWeightEdges:
+                    verts[e.vertices[0]].select = True
+                    verts[e.vertices[1]].select = True
+                extendBevelWeightVerticesIndices = [v.index for v in verts if v.select] #Saving all vertices that may need to be used to extend bevel weights
+
+                faces.foreach_set("select", (False,) * len(faces))
+                edges.foreach_set("select", (False,) * len(edges))
+                verts.foreach_set("select", (False,) * len(verts))
+
                 # Here's where we really extend the edges bevel weights
                 lastFoundVertexIndex = -1
-                
+                extendRevisions = 0
                 for vI in extendBevelWeightVerticesIndices:
-
+                    extendRevisions+=1
                     if vI == lastFoundVertexIndex or verts[vI].bevel_weight == 0.0:
                         continue
                     verts[vI].select = True
@@ -210,6 +216,7 @@ class FinalBevel(bpy.types.Operator):
                 
 
         # print("The whole script took: ", time.time()-then, " seconds")
+        # print("Extend revisions: ", extendRevisions)
 
         return {'FINISHED'}
 
