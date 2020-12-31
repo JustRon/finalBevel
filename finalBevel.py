@@ -43,22 +43,6 @@ class FinalBevel(bpy.types.Operator):
         max = 100
     )
 
-    # secondaryBevelSegments: IntProperty(
-    #     name = "Secondary Bevel Segments",
-    #     description = "How many segments to use for the edges with the second highest bevel weight",
-    #     default = 3,
-    #     min = 2,
-    #     max = 100
-    # )
-
-    # tertiaryBevelSegments: IntProperty(
-    #     name = "Tertiary Bevel Segments",
-    #     description = "How many segments to use for the remaining edges",
-    #     default = 2,
-    #     min = 2,
-    #     max = 100
-    # )
-
     clampOverlap: BoolProperty(
         name = "Clamp Overlap",
         description = "Whether to use clamp overlap on any bevel iteration",
@@ -72,7 +56,6 @@ class FinalBevel(bpy.types.Operator):
 
     def execute(self, context):
         # then = time.time() #Time before the operations start
-        # Making sure we're in edge mode before we start
 
         # Setup stuff
         so = bpy.context.active_object
@@ -83,8 +66,19 @@ class FinalBevel(bpy.types.Operator):
         so.data.use_customdata_vertex_bevel = True
 
         currentBevelSegments = self.primaryBevelSegments
-        # bevelSegmentsList = [self.primaryBevelSegments, self.secondaryBevelSegments, self.tertiaryBevelSegments]
-        
+
+        #Everything needs to be deselected
+        faces.foreach_set("select", (False,) * len(faces))
+        edges.foreach_set("select", (False,) * len(edges))
+        verts.foreach_set("select", (False,) * len(verts))
+
+        #Putting our mesh into edge mode, making sure no faces are hidden and selecting all non-manifold edges while we're at it
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_mode(type="EDGE")
+        bpy.ops.mesh.reveal(select = False)
+        bpy.ops.mesh.select_non_manifold()
+        bpy.ops.object.mode_set(mode='OBJECT')
+
         #Saving all our different bevel weights into a list
         bevelWeights = []
         for e in edges:
@@ -92,26 +86,15 @@ class FinalBevel(bpy.types.Operator):
                 if bevelWeights.count(e.bevel_weight) == 0:
                     bevelWeights.append(e.bevel_weight)
 
-        #Everything needs to be deselected
-        faces.foreach_set("select", (False,) * len(faces))
-        edges.foreach_set("select", (False,) * len(edges))
-        verts.foreach_set("select", (False,) * len(verts))
-
-        bpy.ops.object.mode_set(mode='EDIT')
-        bpy.ops.mesh.select_mode(type="EDGE")
-        bpy.ops.mesh.reveal(False)
-        bpy.ops.mesh.select_non_manifold()
-        bpy.ops.object.mode_set(mode='OBJECT')
-
+        #Removing bevel weights from non-manifold edges to avoid edge case issues and performance impacts. Non-manifold edges cannot be beveled anyway.
         nonManifoldEdges = [e for e in edges if e.select == True]
         for edge in nonManifoldEdges:
             edge.bevel_weight = 0.0  
 
+        #Deselecting everything again
         faces.foreach_set("select", (False,) * len(faces))
         edges.foreach_set("select", (False,) * len(edges))
         verts.foreach_set("select", (False,) * len(verts))
-
-
 
         #Let's make sure our bevel weights are sorted largest to smallest
         bevelWeights.sort(reverse=True)
@@ -119,18 +102,18 @@ class FinalBevel(bpy.types.Operator):
         #Iterating through the mesh based on the amount of bevel weights we have
         for i in range(len(bevelWeights)):
 
-            # if i == 1:
-            #     currentBevelSegments = self.secondaryBevelSegments
-            # elif i > 1:
-            #     currentBevelSegments = self.tertiaryBevelSegments
-
             #Let's select all edges with the current bevel weight assigned and bevel them
             currentBevelWeightEdges = [e for e in edges if e.bevel_weight == bevelWeights[i]]
             for edge in currentBevelWeightEdges:
                 edge.select = True
             bpy.ops.object.mode_set(mode='EDIT')
             bpy.ops.mesh.bevel(offset = (self.bevelWidth * .01) * bevelWeights[i], segments = currentBevelSegments, profile = self.bevelProfile,clamp_overlap=self.clampOverlap, miter_outer='ARC')
+            bpy.ops.mesh.region_to_loop()   #There are edges cases where not all newly created edges are assigned the same bevel weight as the edges had previously, this tries to compensate for these edge cases. Could potentially cause other edges cases.
             bpy.ops.object.mode_set(mode='OBJECT')
+            
+            boundaryEdges = [e for e in edges if e.select == True and e.bevel_weight == 0.0]
+            for e in boundaryEdges:
+                e.bevel_weight = bevelWeights[i]
 
             #Deselect everything again
             faces.foreach_set("select", (False,) * len(faces))
