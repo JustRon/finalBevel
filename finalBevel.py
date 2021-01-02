@@ -1,30 +1,48 @@
 import bpy, time
-from bpy.props import FloatProperty, IntProperty,BoolProperty
+from bpy.props import FloatProperty, IntProperty,BoolProperty, PointerProperty
+from bpy.types import Operator,Panel,PropertyGroup
 
 bl_info = {
     "name": "Final Bevel",
     "description": "Bakes accurate bevels into an object based on their bevel weights.",
     "author": "Ron Frölich",
-    "version": (0, 2),
+    "version": (0, 3),
     "blender": (2, 80, 0),
-    "location": "View3D > Object > FinalBevel",
+    "location": "3D View > Sidebar",
     "support": "COMMUNITY",
     "category": "Object"
 }
 
-class FinalBevel(bpy.types.Operator):
-    """Tooltip"""
-    bl_idname = "object.final_bevel"
-    bl_label = "Final Bevel"
-    bl_options = {'REGISTER', 'UNDO'}
+def updatePanelValues(self, context):
+    if bpy.context.active_object.finalBevel.finalBevelActive:
+        bpy.ops.object.stop_final_bevel()
+        bpy.ops.object.final_bevel()
 
-    #Properties
+def saveBackupMesh():
+    so = bpy.context.active_object
+    meshBackup = bpy.data.meshes.new_from_object(so)
+    meshBackup.name = so.name + "(FinalBevelBackup)"
+
+    so['finalBevelBackup'] = meshBackup
+
+def retrieveBackupMesh():
+    so = bpy.context.active_object
+    oldName = so.data.name
+    oldData = so.data
+    so.data = so['finalBevelBackup']
+    bpy.data.meshes.remove(oldData)
+    so.data.name = oldName
+    del so['finalBevelBackup']
+
+class FB_Addon_Props(PropertyGroup):
+
     bevelWidth: FloatProperty(
         name = "Bevel Width",
         description = "How wide a bevel with a weight of 1 should be (cm)",
         default = 20,
         min = 0.001,
-        max = 1000
+        max = 1000,
+        update=updatePanelValues
     )
 
     bevelProfile: FloatProperty(
@@ -32,7 +50,8 @@ class FinalBevel(bpy.types.Operator):
         description = "The profile with which the edges are beveled",
         default = 0.5,
         min = 0.0,
-        max = 1.0
+        max = 1.0,
+        update=updatePanelValues
     )
 
     primaryBevelSegments: IntProperty(
@@ -40,14 +59,65 @@ class FinalBevel(bpy.types.Operator):
         description = "How many segments to use for the edges with the highest bevel weight",
         default = 4,
         min = 2,
-        max = 100
+        max = 100,
+        update=updatePanelValues
     )
 
     clampOverlap: BoolProperty(
         name = "Clamp Overlap",
         description = "Whether to use clamp overlap on any bevel iteration",
-        default = False
+        default = False,
+        update=updatePanelValues
     )
+
+    finalBevelActive: BoolProperty(
+        name = "Final Bevel Active",
+        description = "Whether Final Bevel is active at the moment. Necessary to define UI and figure out what to do",
+        default = False,
+    )
+
+class ToggleFinalBevel(bpy.types.Operator):
+    bl_idname = 'object.toggle_final_bevel'
+    bl_label = "Final Bevel"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        active_object = context.active_object
+        return active_object is not None and active_object.type == 'MESH' and (context.mode == 'OBJECT')
+        
+    def execute(self, context):
+
+        if bpy.context.active_object.finalBevel.finalBevelActive:
+            bpy.ops.object.stop_final_bevel()
+        else:
+            bpy.ops.object.final_bevel()
+
+        return {'FINISHED'} 
+
+class StopFinalBevel(bpy.types.Operator):
+    bl_idname = 'object.stop_final_bevel'
+    bl_label = "Stop Final Bevel"
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        active_object = context.active_object
+        return active_object is not None and active_object.type == 'MESH' and (context.mode == 'OBJECT')
+
+    def execute(self, context):
+        so = bpy.context.active_object
+        fb = so.finalBevel
+
+        fb.finalBevelActive = False
+        retrieveBackupMesh()
+        return {'FINISHED'} 
+
+class FinalBevel(bpy.types.Operator):
+    """Tooltip"""
+    bl_idname = 'object.final_bevel'
+    bl_label = "Final Bevel"
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     @classmethod
     def poll(cls, context):
@@ -57,15 +127,20 @@ class FinalBevel(bpy.types.Operator):
     def execute(self, context):
         # then = time.time() #Time before the operations start
 
+        saveBackupMesh()        
+
         # Setup stuff
         so = bpy.context.active_object
+        fb = so.finalBevel
         faces = so.data.polygons
         edges = so.data.edges
         verts = so.data.vertices
         so.data.use_customdata_edge_bevel = True
         so.data.use_customdata_vertex_bevel = True
 
-        currentBevelSegments = self.primaryBevelSegments
+        fb.finalBevelActive = True
+
+        currentBevelSegments = fb.primaryBevelSegments
 
         #Everything needs to be deselected
         faces.foreach_set("select", (False,) * len(faces))
@@ -107,7 +182,7 @@ class FinalBevel(bpy.types.Operator):
             for edge in currentBevelWeightEdges:
                 edge.select = True
             bpy.ops.object.mode_set(mode='EDIT')
-            bpy.ops.mesh.bevel(offset = (self.bevelWidth * .01) * bevelWeights[i], segments = currentBevelSegments, profile = self.bevelProfile,clamp_overlap=self.clampOverlap, miter_outer='ARC')
+            bpy.ops.mesh.bevel(offset = (fb.bevelWidth * .01) * bevelWeights[i], segments = currentBevelSegments, profile = fb.bevelProfile,clamp_overlap=fb.clampOverlap, miter_outer='ARC')
             bpy.ops.mesh.region_to_loop()   #There are edges cases where not all newly created edges are assigned the same bevel weight as the edges had previously, this tries to compensate for these edge cases. Could potentially cause other edges cases.
             bpy.ops.object.mode_set(mode='OBJECT')
             
@@ -144,11 +219,11 @@ class FinalBevel(bpy.types.Operator):
                 for vI in extendBevelWeightVerticesIndices:
                     if verts[(vI - 1)] and verts[(vI - 1)].bevel_weight >= bevelWeights[i]: 
                         verts[(vI - 1)].select = True
-                        for o in range(self.primaryBevelSegments-1):
+                        for o in range(fb.primaryBevelSegments-1):
                             verts[(vI+1+(o))].select = True
                     elif verts[(vI + 1)] and verts[(vI + 1)].bevel_weight >= bevelWeights[i]: 
                         verts[(vI + 1)].select = True
-                        for o in range(self.primaryBevelSegments-1):
+                        for o in range(fb.primaryBevelSegments-1):
                             verts[(vI+2+(o))].select = True
                     else: 
                         verts[vI].select = False
@@ -206,11 +281,48 @@ class FinalBevel(bpy.types.Operator):
 def mesh_object_menu_draw(self, context):
     self.layout.operator('object.final_bevel')
 
+class VIEW3D_PT_final_bevel(bpy.types.Panel):
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "Final Bevel"
+    bl_label = "Final Bevel"    
+
+    @classmethod
+    def poll(cls, context):
+        active_object = context.active_object
+        return active_object is not None and active_object.type == 'MESH' and (context.mode == 'OBJECT')    
+
+    def draw(self,context):
+
+        layout = self.layout
+        scene = context.scene
+        fb = context.active_object.finalBevel
+
+        layout.prop(fb, "bevelWidth")
+        layout.prop(fb, "bevelProfile")
+        layout.prop(fb, "primaryBevelSegments")
+        layout.prop(fb, "clampOverlap")
+
+        if fb.finalBevelActive:
+            self.layout.operator('object.toggle_final_bevel',text="Stop Final Bevel",depress=True)
+        else:
+            self.layout.operator('object.toggle_final_bevel',text="Run Final Bevel",depress=False)
+
 def register():
+    bpy.utils.register_class(FB_Addon_Props)
+    bpy.utils.register_class(VIEW3D_PT_final_bevel)
     bpy.utils.register_class(FinalBevel)
-    bpy.types.VIEW3D_MT_object.append(mesh_object_menu_draw)
+    bpy.utils.register_class(StopFinalBevel)
+    bpy.utils.register_class(ToggleFinalBevel)
+    bpy.types.Object.finalBevel = PointerProperty(type=FB_Addon_Props)
+    # bpy.types.VIEW3D_MT_object.append(mesh_object_menu_draw)
 
 
 def unregister():
-    bpy.utils.unregister_class(FinalBevel)
-    bpy.types.VIEW3D_MT_object.remove(mesh_object_menu_draw)
+    bpy.utils.unregister_class(FB_Addon_Props)
+    bpy.utils.unregister_class(VIEW3D_PT_final_bevel)
+    bpy.utils.unregister_class(FinalBevel)    
+    bpy.utils.unregister_class(StopFinalBevel)    
+    bpy.utils.unregister_class(ToggleFinalBevel)    
+    del bpy.types.Object.finalBevel
+    # bpy.types.VIEW3D_MT_object.remove(mesh_object_menu_draw)
